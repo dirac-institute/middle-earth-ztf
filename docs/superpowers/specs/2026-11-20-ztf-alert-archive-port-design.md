@@ -209,8 +209,8 @@ removed. Container names and `idac.service` labels use the prefix
   `aa04f6d7a5ada779bf786d213e8bfea31ef3b033` and runs `go build`. Stage two
   is a small Debian image with the binary, `bash`, `gzip`, `coreutils`,
   `tzdata` and a scheduler.
-- The shell scripts live in this repo (they were never committed upstream in
-  their deployed form) and are rewritten from the legacy ones:
+- The shell scripts were never committed upstream in
+  their deployed form and are rewritten from the legacy ones.  Commit these fixes to the upstream repo:
   - `run_archivist.sh PROGRAMID [DATE]` — same interface, topic naming,
     broker, group override and output names. Changes from legacy:
     - proper shebang, `set -euo pipefail`;
@@ -367,6 +367,7 @@ Claude's calls, open to correction:
   `AllowOverride None`.
 - Go binary built from the pinned upstream commit in the image; wrapper
   scripts live in this repo.
+	* Eric: instead, push fixes to the upstream ztf-go-archivist repo
 - Failed runs publish nothing; `MD5SUMS` lines are replaced, not duplicated.
 - `MD5SUMS` uses bare filenames from now on, and existing lines are
   normalised to match at cutover.
@@ -385,6 +386,7 @@ Claude's calls, open to correction:
   and exits non-zero but notifies no one. Options later: a status file the
   gadget monitor can read, or a Slack webhook (which would be a second
   secret).
+	** Eric: let's add a Slack webhook.
 - **VM facts**, to be read off the VM at the start of implementation:
   hostname/FQDN, outbound IP, local disk size, whether `/service/shire` is
   mounted, and whether the VM proxy imposes a request timeout or size limit
