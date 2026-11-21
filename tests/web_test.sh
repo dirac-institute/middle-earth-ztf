@@ -78,10 +78,10 @@ status ".htaccess is not served" "403 404" /alerts/public/.htaccess
 status ".git is not served" "403 404" /alerts/public/.git/HEAD
 
 first=$(echo "$listing" | head -n 1)
-status "a tarball downloads" 200 -r 0-0 -H "Range:" "/alerts/public/$first"
-status "a Range request gets 206" 206 -r 0-99 "/alerts/public/$first"
-len=$(curl -s -r 0-99 "$BASE/alerts/public/$first" | wc -c)
-if [[ $len -eq 100 ]]; then ok "the range is 100 bytes"; else fail "the range is 100 bytes" "got $len"; fi
+status "a tarball is there to download" 200 -I "/alerts/public/$first"
+status "a Range request gets 206" 206 -r 0-9 "/alerts/public/$first"
+len=$(curl -s -r 0-9 "$BASE/alerts/public/$first" | wc -c)
+if [[ $len -eq 10 ]]; then ok "the range is 10 bytes"; else fail "the range is 10 bytes" "got $len"; fi
 
 if [[ $REAL != 1 ]]; then
     echo "# fixture strays"
@@ -110,8 +110,8 @@ body "it uses the partnership theme" "/alerts/partnership/fancy-index/style.css"
 status "the partnership theme is served" 200 -u "$CRED" /alerts/partnership/fancy-index/style.css
 status ".htaccess is not served even with the password" "403 404" -u "$CRED" /alerts/partnership/.htaccess
 plist=$(curl -s -u "$CRED" "$BASE/alerts/partnership/" | grep -o -E 'ztf_partnership_[0-9]{8}\.tar\.gz' | head -n 1)
-status "a partnership tarball needs a password" 401 -r 0-99 "/alerts/partnership/$plist"
-status "a partnership tarball downloads with it" 206 -r 0-99 -u "$CRED" "/alerts/partnership/$plist"
+status "a partnership tarball needs a password" 401 -r 0-9 "/alerts/partnership/$plist"
+status "a partnership tarball downloads with it" 206 -r 0-9 -u "$CRED" "/alerts/partnership/$plist"
 
 echo "# nothing else"
 status "/alerts/ itself is not a listing" "403 404" /alerts/

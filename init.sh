@@ -1,13 +1,13 @@
 #!/bin/bash
 # Host initialization for a Middle-earth service VM. Run as root; safe to re-run.
 #
-#   git clone <this repo> && cd middle-earth-service-example
+#   git clone <this repo> && cd middle-earth-ztf
 #   sudo ./init.sh
 #   podman compose up -d --build
 #
 # Only host-level concerns live here (checking the service account from IT's
-# /root/VM.set, podman packages, .env). Everything else belongs in the
-# container image. The service account, SSH, and SELinux are provisioned by
+# /root/VM.set, podman packages, the data directory, .env). Everything else
+# belongs in the container image. The service account, SSH, and SELinux are provisioned by
 # IT; this script does not change them.
 
 set -euo pipefail
@@ -17,6 +17,9 @@ ENV_FILE="$REPO_DIR/.env"
 # Written by IT when the VM is provisioned and authoritative for the service
 # account. tcsh syntax: `set VMUSER=astro-myservice`.
 VM_SET=/root/VM.set
+# Where the archive lives. The NFS share IT mounts for this service; set
+# ZTF_DATA_ROOT in the environment to deploy against a test copy instead.
+DATA_ROOT="${ZTF_DATA_ROOT:-/service/shire}"
 
 WARNINGS=0
 warn() { echo "WARNING: $*" >&2; WARNINGS=$((WARNINGS + 1)); }
@@ -81,6 +84,51 @@ systemctl enable --now podman-restart.service >/dev/null 2>&1 \
     && echo "podman-restart.service enabled" \
     || warn "could not enable podman-restart.service (containers won't restart at boot)"
 
+# ── Data directory ─────────────────────────────────────────────────────────
+echo
+echo "== Data directory ($DATA_ROOT) =="
+# The share is exported with root_squash: root here is "nobody" there. Every
+# check and every mkdir is done as the service account, which is also who the
+# containers run as.
+as_svc() { setpriv --reuid="$SVC_UID" --regid="$SVC_GID" --clear-groups "$@"; }
+[ -d "$DATA_ROOT" ] || die "$DATA_ROOT does not exist. Is the share mounted? Ask PACS via help-astro@uw.edu."
+for d in alerts/public alerts/partnership; do
+    as_svc test -d "$DATA_ROOT/$d" \
+        || die "$DATA_ROOT/$d is missing or $SVC_USER cannot read it. See DEPLOY.md, \"Preparing the data directory\"."
+    as_svc test -w "$DATA_ROOT/$d" \
+        || die "$SVC_USER cannot write to $DATA_ROOT/$d, so the archivist could not add tarballs.
+       Ask IT to make $SVC_USER the owner of it and of the files in it. See DEPLOY.md,
+       \"Preparing the data directory\"."
+    if as_svc test -e "$DATA_ROOT/$d/MD5SUMS" && ! as_svc test -w "$DATA_ROOT/$d/MD5SUMS"; then
+        # Not fatal: the archivist replaces MD5SUMS by rename, which needs only
+        # the directory to be writable.
+        warn "$DATA_ROOT/$d/MD5SUMS is not writable by $SVC_USER; the ownership change looks incomplete"
+    fi
+    echo "  ok   $d is writable by $SVC_USER"
+done
+for d in scratch logs secrets; do
+    if ! as_svc test -d "$DATA_ROOT/$d"; then
+        as_svc mkdir -m 0755 "$DATA_ROOT/$d" \
+            || die "could not create $DATA_ROOT/$d as $SVC_USER"
+        echo "  ok   created $d"
+    fi
+    as_svc test -w "$DATA_ROOT/$d" || die "$SVC_USER cannot write to $DATA_ROOT/$d"
+    echo "  ok   $d exists"
+done
+if as_svc test -r "$DATA_ROOT/secrets/htpasswd"; then
+    echo "  ok   secrets/htpasswd is readable by $SVC_USER"
+    mode="$(as_svc stat -c %a "$DATA_ROOT/secrets/htpasswd")"
+    [ "$mode" = 600 ] || warn "secrets/htpasswd has mode $mode; it should be 600 (SECRETS.md)"
+else
+    die "$DATA_ROOT/secrets/htpasswd is missing or $SVC_USER cannot read it. Without it nobody
+       can log in to /alerts/partnership. See SECRETS.md."
+fi
+if as_svc test -r "$DATA_ROOT/secrets/slack_webhook"; then
+    echo "  ok   secrets/slack_webhook is present; failed nights will be posted to Slack"
+else
+    warn "no $DATA_ROOT/secrets/slack_webhook: a failed night will be logged but nobody will be told (SECRETS.md)"
+fi
+
 # ── Compose environment ────────────────────────────────────────────────────
 echo
 echo "== Compose environment =="
@@ -103,9 +151,11 @@ SVC_USER=$SVC_USER
 SVC_UID=$SVC_UID
 SVC_GID=$SVC_GID
 SVC_FQDN=$FQDN
+ZTF_DATA_ROOT=$DATA_ROOT
 EOF
 echo "  ok   SVC_USER=$SVC_USER SVC_UID=$SVC_UID SVC_GID=$SVC_GID written to $ENV_FILE"
 echo "  ok   SVC_FQDN=$FQDN written to $ENV_FILE"
+echo "  ok   ZTF_DATA_ROOT=$DATA_ROOT written to $ENV_FILE"
 
 echo
 if [ "$WARNINGS" -gt 0 ]; then

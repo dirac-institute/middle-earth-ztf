@@ -4,7 +4,7 @@
 # tests/web_test.sh against it. For machines with no container runtime. The
 # real check is the container itself; see DEPLOY.md.
 #
-#   tests/local_httpd_test.sh [PORT]
+#   tests/local_httpd_test.sh [PORT [USER:PASSWORD]]
 
 set -euo pipefail
 
@@ -18,7 +18,16 @@ cleanup() {
 }
 trap cleanup EXIT
 
-"$REPO_DIR/tests/make_fixture.sh" "$WORK/data" > /dev/null
+# By default a throwaway fixture. To try the configuration against a real
+# copy of the archive instead (read-only), set ZTF_TEST_ALERTS_ROOT and
+# ZTF_TEST_HTPASSWD and pass the partnership login as the second argument.
+ALERTS_ROOT=${ZTF_TEST_ALERTS_ROOT:-$WORK/data/alerts}
+HTPASSWD=${ZTF_TEST_HTPASSWD:-$WORK/data/secrets/htpasswd}
+if [ -n "${ZTF_TEST_ALERTS_ROOT:-}" ]; then
+    export ZTF_WEB_TEST_REAL=1
+else
+    "$REPO_DIR/tests/make_fixture.sh" "$WORK/data" > /dev/null
+fi
 
 cat > "$WORK/httpd.conf" <<CONF
 ServerRoot /etc/httpd
@@ -48,8 +57,8 @@ Define ZTF_LISTEN $PORT
 Define ZTF_HTDOCS $REPO_DIR/web/htdocs
 Define ZTF_FANCY_INDEX $REPO_DIR/web/fancy-index
 Define ZTF_CONF_DIR $REPO_DIR/web/conf
-Define ZTF_ALERTS_ROOT $WORK/data/alerts
-Define ZTF_HTPASSWD $WORK/data/secrets/htpasswd
+Define ZTF_ALERTS_ROOT $ALERTS_ROOT
+Define ZTF_HTPASSWD $HTPASSWD
 Include $REPO_DIR/web/conf/httpd.conf
 CONF
 httpd -f "$WORK/httpd.conf" -t
@@ -61,7 +70,7 @@ for _ in 1 2 3 4 5 6 7 8 9 10; do
 done
 
 status=0
-"$REPO_DIR/tests/web_test.sh" "http://127.0.0.1:$PORT" || status=$?
+"$REPO_DIR/tests/web_test.sh" "http://127.0.0.1:$PORT" ${2:+"$2"} || status=$?
 if [ "$status" -ne 0 ]; then
     echo "--- error log ---"
     tail -n 20 "$WORK/error.log"

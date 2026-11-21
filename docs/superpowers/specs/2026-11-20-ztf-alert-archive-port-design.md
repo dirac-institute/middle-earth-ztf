@@ -1,6 +1,8 @@
 # ZTF alert archive: port to the DiRAC VM infrastructure
 
-Date: 2026-11-20. Status: draft for review by Eric Bellm.
+Date: 2026-11-20. Status: approved by Eric Bellm with the changes marked
+"Eric" below; implemented. Where the implementation departed from this
+design, see "As built" at the end.
 
 ## Intent
 
@@ -209,8 +211,10 @@ removed. Container names and `idac.service` labels use the prefix
   `aa04f6d7a5ada779bf786d213e8bfea31ef3b033` and runs `go build`. Stage two
   is a small Debian image with the binary, `bash`, `gzip`, `coreutils`,
   `tzdata` and a scheduler.
-- The shell scripts were never committed upstream in
-  their deployed form and are rewritten from the legacy ones.  Commit these fixes to the upstream repo:
+- The shell scripts were never committed upstream in their deployed form
+  and are rewritten from the legacy ones. Eric: the rewritten scripts are
+  committed to the upstream ztf-go-archivist repo, not kept here; the image
+  takes them from the same pinned commit as the binary.
   - `run_archivist.sh PROGRAMID [DATE]` — same interface, topic naming,
     broker, group override and output names. Changes from legacy:
     - proper shebang, `set -euo pipefail`;
@@ -365,9 +369,9 @@ Claude's calls, open to correction:
 - Three containers rather than cron on the VM host.
 - `.htaccess` logic and fancy-index assets move into the repo and image;
   `AllowOverride None`.
-- Go binary built from the pinned upstream commit in the image; wrapper
-  scripts live in this repo.
-	* Eric: instead, push fixes to the upstream ztf-go-archivist repo
+- Go binary built from the pinned upstream commit in the image.
+  Eric: the wrapper scripts go upstream too (Claude had proposed keeping them
+  in this repo).
 - Failed runs publish nothing; `MD5SUMS` lines are replaced, not duplicated.
 - `MD5SUMS` uses bare filenames from now on, and existing lines are
   normalised to match at cutover.
@@ -382,11 +386,15 @@ Claude's calls, open to correction:
 
 ## Left open
 
-- **Failure alerting.** Cron's email goes away. This design logs failures
-  and exits non-zero but notifies no one. Options later: a status file the
-  gadget monitor can read, or a Slack webhook (which would be a second
-  secret).
-	** Eric: let's add a Slack webhook.
+- **Failure alerting.** Decided by Eric: a Slack webhook. Its URL is a
+  second secret, `secrets/slack_webhook`; `nightly.sh` posts to it when any
+  of the three jobs fails. It is optional at deploy time.
+- **Empty nights.** Decided by Eric: left ambiguous. A run that hears nothing
+  and exits cleanly publishes an empty tarball, as it always has, whether
+  ZTF did not observe or the stream was silently unreachable. No pre-flight
+  topic check is built.
+- **Who deploys.** Decided by Eric: he does, with IT. This work delivers the
+  repo and the runbook in `DEPLOY.md`; nothing was run on the VM.
 - **VM facts**, to be read off the VM at the start of implementation:
   hostname/FQDN, outbound IP, local disk size, whether `/service/shire` is
   mounted, and whether the VM proxy imposes a request timeout or size limit
@@ -401,3 +409,31 @@ Claude's calls, open to correction:
   `kafka-go v0.3.5`; use the newest toolchain that builds it unmodified).
 - The test harness (bats or plain bash) and fixture layout.
 - Wording of `README.md`, `DEPLOY.md`, `SECRETS.md`.
+
+## As built
+
+Differences from the design above, found while implementing:
+
+- **Go toolchain.** One build stage on `golang:1.23`, which builds the
+  module unmodified. A binary built this way read real alerts from the
+  broker in a 20-second test from epyc under a throwaway consumer group.
+- **Pinned commit.** `5c8c0c7` on upstream branch `u/ebellm/vm-port`, which
+  is `aa04f6d` plus the rewritten scripts and their tests.
+- **Trailing slash.** `/alerts/public` without the slash returns the listing
+  directly rather than a redirect, with a `<base href>` added to each
+  `header.html`. Apache behind the TLS proxy cannot build a correct redirect
+  URL, and its redirect `Location` header cannot be rewritten with
+  `mod_headers`. The landing page's button now links to `alerts/public/`.
+- **Partnership login** is set per `<Directory>`, not per `<Location>`: a
+  `<Location>` let a valid password fetch dot-files.
+- **Secrets mount.** The whole `secrets/` directory is mounted read-only in
+  both `web` and `archivist`, rather than one file each, so that the
+  optional `slack_webhook` can be absent without breaking the mount.
+- **Compressed temp file** is written in the destination directory as
+  `.tmp.<name>.<pid>`, not in scratch: scratch and the archive are separate
+  bind mounts, so a rename between them would be a copy.
+- **Web tests** run against a locally installed httpd 2.4.6 on epyc, not the
+  container: epyc has no container runtime this account can use. The
+  container images have not been built anywhere yet.
+- **`init.sh`** creates `scratch/`, `logs/` and `secrets/` as the service
+  account, and accepts `ZTF_DATA_ROOT` to deploy against a test copy.

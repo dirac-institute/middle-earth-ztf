@@ -1,260 +1,108 @@
-# Middle-earth Service Example
+# ZTF alert archive
 
-A template for deploying containerized services on UW DiRAC VM infrastructure.
+The public archive of [Zwicky Transient Facility](https://www.ztf.caltech.edu)
+alerts, served at <https://ztf.uw.edu/alerts/public/> and, for ZTF partnership
+members, <https://ztf.uw.edu/alerts/partnership/>. One gzipped tarball per
+night per program, each holding that night's alerts as individual Avro files.
 
-This repo is a working "hello world" — Apache serving static files and
-reverse-proxying a Python API, all in one container — that demonstrates the
-deployment pattern all DiRAC VM services should follow. Next to it runs the
-**service VM monitor** (`monitoring/`), a small container that reports the VM's
-CPU, memory and disks to the DiRAC gadget monitor. Every service carries it. It is meant to be read
-by you *and* by an AI coding assistant. Together, you use it to turn a legacy
-service into a standalone repo that deploys the same way.
+This repo deploys it on a UW DiRAC service VM. It was ported from epyc in
+late 2026 and follows the
+[middle-earth-service-example](https://github.com/dirac-institute/middle-earth-service-example)
+pattern: clone, `sudo ./init.sh`, `podman compose up -d --build`.
 
-## What you need before you start
+## What runs
 
-### From DiRAC infrastructure
+| Container | What it does |
+|---|---|
+| `web` | Apache on `127.0.0.1:8080`. Serves the landing page and the directory listings of the two archives. The VM's reverse proxy terminates TLS in front of it. |
+| `archivist` | At 00:10 Pacific every night, reads the night's alerts from the ZTF Kafka broker for 7 hours and writes `ztf_public_YYYYMMDD.tar.gz` and `ztf_partnership_YYYYMMDD.tar.gz`. Also refills any night in the last week whose tarball is missing. |
+| `monitoring` | Reports the VM's CPU, memory and disks to the DiRAC gadget monitor. Copied unchanged from the example. |
 
-- **A Rocky 10 VM** to deploy to, with `sudo` access or root login directly.
-  The VM provides a reverse proxy that handles TLS termination and routes
-  traffic to your container on port 8080.
-- **A service account**, created on the VM by IT, and **`/root/VM.set`**
-  naming it (IT writes this when it provisions the VM). Your containers
-  will run as this identity. `init.sh` reads it from `VM.set` and exits if
-  the file is missing or disagrees with the account on the VM.
-  On production VMs the service's secrets live on an NFS share exported with
-  `root_squash`, so only this uid can read them. If you already have files on
-  `/service/shire` for your service, tell IT, so the account they create
-  (and name in `VM.set`) is the uid/gid that owns them.
-- **Network access** from the VM — it needs to pull container base images
-  during the build.
+The archive itself (about 31 TB) is not in any container. It lives on the
+service's NFS share, `/service/shire` on the VM, which is
+`/astro/store/shire/@Service/ztf/data` on arnor, gondor and epyc.
 
-All of these can be requested from PACS via help-astro@uw.edu. There is a 
-tracking spreadsheet of all DiRAC services in [this spreadsheet](https://docs.google.com/spreadsheets/d/14ryGw2b2tsHqK27PX1YHzvvZDDEbCNak8C2At-3fgg8/edit?gid=0#gid=0)
+```
+/service/shire/
+  alerts/public/        ztf_public_*.tar.gz, MD5SUMS
+  alerts/partnership/   ztf_partnership_*.tar.gz, MD5SUMS
+  secrets/              htpasswd, slack_webhook        (SECRETS.md)
+  scratch/              the night's uncompressed tar while it is being written
+  logs/                 one log per job per night, kept 90 days
+```
 
-### From your legacy service
+## Where the code is
 
-- **SSH access** to the machine where it currently runs.
-- **A working understanding of what it does**: what ports it listens on, what
-  protocols it speaks, what clients connect to it, what it depends on.
-- **Knowledge of where its config and secrets live.** You do not need to have
-  fully untangled everything — that is what the AI is for — but you should
-  know roughly where to point it.
+- **This repo**: the containers, the Apache configuration, the website's
+  static files, deployment and cutover tooling.
+- **[ztf-go-archivist](https://github.com/ZwickyTransientFacility/ztf-go-archivist)**:
+  the Go program that reads Kafka and the shell scripts that run it nightly
+  (`run_archivist.sh`, `rerun_archivist.sh`, `nightly.sh`). The archivist
+  image builds that repo at the commit pinned in `archivist/Dockerfile`. To
+  change how archiving behaves, change it there, run `make test`, push, and
+  update the pin.
 
-### An AI coding assistant
+## Common tasks
 
-This guide assumes you are using an AI agent that can read files, run shell
-commands, and write code — something like Claude Code, Cursor, or similar.
-The prompts below are written for that kind of tool.
+Run these on the VM, in the repo directory.
 
-## How this works
-
-The AI reads this example repo to learn the deployment pattern. Then it reads
-your legacy service (via SSH, config files you provide, or documentation you
-point it at) to understand what your service actually does. It produces a new
-standalone repo shaped like this one — its own `init.sh`,
-Dockerfile, compose file, and documentation — but containing your service
-instead of the hello-world example.
-
-You stay in the loop for decisions the AI cannot make: which parts of the
-legacy setup are load-bearing vs. historical accident, what the service
-account should be, where secrets live, and what the service should be called.
-
-## Step by step
-
-### 1. Clone this example repo
-
-Your AI needs to read it. Clone it somewhere accessible:
+**See whether last night worked.**
 
 ```bash
-git clone <this repo> /path/to/middle-earth-service-example
+podman logs --since 24h ztf-alert-archive-archivist | grep nightly.sh
+ls -l /service/shire/alerts/public | tail -3
 ```
 
-### 2. Gather information about your legacy service
+Each job's full output is in `/service/shire/logs/<job>_<YYYYMMDD>.log`. If a
+Slack webhook is configured, a failed night is posted there.
 
-Before prompting the AI, collect (or know where to find) as much of this as
-you can. Gaps are okay — the AI can investigate via SSH — but more context up
-front means fewer round trips.
+A 74-byte tarball is an empty night. That is normal when ZTF did not observe,
+and it is also what a night looks like if the broker was unreachable in a way
+that produced no error. The archivist cannot tell the two apart.
 
-- **What the service does** in one or two sentences.
-- **What processes run** (`systemctl list-units`, `ps aux`, whatever is
-  relevant).
-- **What ports it listens on** and what protocols (HTTP, custom TCP, etc.).
-- **Where its config files live** (e.g., `/etc/myservice/`, a home directory,
-  scattered across `/usr/local`).
-- **Where its secrets live** (keys, tokens, credentials) and how they
-  get there (manually placed, certbot, puppet, etc.).
-- **What packages it depends on** (RPMs, pip packages, system libraries).
-- **What it writes** (logs, data, state) and where.
-- **How it currently starts** (systemd unit, init script, cron, manually).
-- **Whether it needs host networking** or can run behind a port mapping.
-- **What OS it runs on** today (RHEL 7, Ubuntu 20.04, etc.).
-
-You do not need all of this in a tidy document. Pointing the AI at the
-machine and saying "look at the systemd units and the config directory" is
-fine.
-
-### 3. Check `/root/VM.set` on your VM
-
-The service account identity comes from IT, not from your repo. On the VM,
-`/root/VM.set` names it:
-
-```
-set VM=myservice
-set VMUSER=astro-myservice
-set VMUID=NNNNNNN
-set VMGID=NNNNNNNNNN
-```
-
-There is nothing to fill in. `init.sh` reads this file and everything else keys
-off of what it finds. There are no fallback defaults: if the file is missing,
-or the account it names doesn't exist on the VM, `init.sh` stops, which is the
-point. If you already have files on `/service/shire` for your service, check
-that `VMUID` and `VMGID` own them. If anything is missing or disagrees, ask
-PACS via help-astro@uw.edu.
-
-### 4. Prompt the AI
-
-The prompt below is a starting point. Adjust it based on what you know and
-what you want. The key ingredients are:
-
-1. **Point it at this repo** as the pattern to follow.
-2. **Point it at the legacy service** so it can understand what to build.
-3. **Tell it what the new repo should be called.**
-
-Here is an example prompt:
-
-> I want to containerize [service name] for deployment on UW DiRAC VM
-> infrastructure.
->
-> **The pattern to follow** is in `/path/to/middle-earth-service-example`.
-> Read the entire repo — especially `DEPLOY.md`, `SECRETS.md`, `init.sh`,
-> the Dockerfile, and `compose.yaml`. The new repo must deploy the same
-> way: clone, `sudo ./init.sh`, `podman compose up -d --build`.
->
-> **The legacy service** currently runs on `legacy-host.example.edu`. I have
-> SSH access as `myuser`. The service runs as [describe: systemd unit,
-> process name, etc.]. Config is in [path]. Secrets (keys, tokens) are in
-> [path]. It listens on port [N] for [protocol].
->
-> **Build a new standalone repo** called `my-service` in [target directory].
-> It should have its own `init.sh`, Dockerfile, `compose.yaml`, `DEPLOY.md`,
-> and `SECRETS.md`, following the same patterns as the example but
-> containing my service.
->
-> **What to keep from the example patterns:**
-> - `init.sh` handles only host-level concerns; everything else is in
->   containers
-> - Secrets are bind-mounted read-only, never baked into images
-> - The service account comes from IT's `/root/VM.set` on the VM, read by
->   `init.sh`; nothing about it is committed to the repo
-> - The container listens on port 8080; the VM handles TLS and routing
-> - Apache for static files and reverse-proxying to the app process
-> - The `monitoring/` folder, copied unchanged, and its `monitoring:` entry
->   in `compose.yaml` (change only `container_name` and `labels`), so the
->   gadget monitor can see the VM's CPU, memory and disks
->
-> **What to figure out from the legacy service:**
-> - What packages and dependencies it needs
-> - What config files it uses and what in them is environment-specific vs.
->   universal
-> - What secrets it needs and where they should be mounted
-> - What it writes (logs, data) and what needs to persist outside the
->   container
-> - Whether it needs host networking or can use port mapping
->
-> **What NOT to carry over:**
-> - Legacy init systems, puppet/ansible config management, or distro-specific
->   workarounds
-> - Anything that was there for historical reasons but is not load-bearing
-> - The example repo's Python/Flask app — replace it with my actual service
-
-### 5. Iterate
-
-The AI will likely need to SSH into the legacy host to inspect config files,
-package lists, and running processes. It may ask you questions about:
-
-- **Ambiguous config:** "This config file has three sections that look
-  unused — should I include them?" Trust your knowledge of the service here.
-- **Secrets provenance:** "Where does this credential come from? Is it
-  renewed automatically?" This determines what goes in `SECRETS.md`.
-- **Network topology:** "Does this need to talk to other internal services?
-  On what network?" This determines whether you need host networking.
-- **State and storage:** "This directory has 200GB of data files — should
-  the container see these via a bind mount?" This is a design decision.
-
-### 6. Deploy and test on your VM
-
-Get the new repo onto your DiRAC VM and deploy it:
+**Re-archive a night by hand.** A topic stays on the broker for a limited
+time, so this only works for recent nights. (The rerunner looks back 7 days;
+how long the broker really keeps a topic has not been checked.)
 
 ```bash
-git clone <new repo>
-cd my-service
+podman exec ztf-alert-archive-archivist run_archivist.sh programid1 20261201
+```
+
+`programid1` is public, `programid2` is partnership. It refuses if the
+tarball already exists; add `--force` as the first argument to replace it. A
+missing tarball from the last 7 days needs no action: the nightly job refills
+it.
+
+**Change the partnership password, or the Slack webhook.** See `SECRETS.md`.
+
+**Deploy a change.** Commit it, then on the VM:
+
+```bash
+git pull
 sudo ./init.sh
 podman compose up -d --build
 ```
 
-Then verify it actually works. Walk through these checks yourself, or have
-the AI do them over SSH to the VM:
+Rebuilding restarts the archivist. Between 00:10 and about 07:30 Pacific that
+kills the night in progress; the rerunner will pick the night up the
+following night, but avoid it.
 
-1. **Containers are running.** `podman ps` should show all expected
-   containers with status `Up`.
+## Testing
 
-2. **No restart loops.** `podman ps` again after 30 seconds — if a
-   container's uptime reset, it is crash-looping. Check
-   `podman logs <container>` for the error.
-
-3. **The service responds.** Hit the actual endpoint your service exposes —
-   API, web UI, protocol-specific client, whatever it is. Confirm you get a
-   real response, not a connection refused or a proxy error.
-
-4. **From a remote client.** Repeat step 3 from a machine *outside* the VM
-   using the VM's FQDN. This validates that the VM's reverse proxy is routing
-   traffic correctly.
-
-5. **The monitoring endpoint answers.** From the VM and from another
-   machine:
-
-   ```bash
-   curl -s http://<vm fqdn>:9110/metrics | grep source_success
-   ```
-
-   Every `source` should report `1`.
-
-6. **Secrets are not baked in.** `podman inspect <container>` — check the
-   mounts section shows your secrets directory bind-mounted read-only.
-   `podman exec <container> cat /path/to/secret` should work (the mount is
-   there), but `podman history <image>` should show no COPY or ADD of
-   secret files.
-
-7. **Survives a restart.** `sudo reboot` the VM. After it comes back, check
-   that `podman ps` shows the containers running again (this confirms
-   `podman-restart.service` is working).
-
-8. **Compare against the legacy service.** If possible, run the same client
-   operations against both the legacy host and the new VM. The responses
-   should be equivalent. Differences here reveal config or dependencies
-   that were missed during containerization.
-
-If any check fails, fix it in the repo (not by hand on the VM), rebuild, and
-re-test. The whole point of this pattern is that the repo *is* the
-deployment — manual fixes on the host are bugs in the repo.
-
-### 7. Register the VM with the gadget monitor
-
-The gadget monitor only graphs VMs listed in its config. Once the service is
-running on its **production** VM and check 5 passes from another machine,
-open a pull request against
-[middle-earth-gadget-monitor](https://github.com/dirac-institute/middle-earth-gadget-monitor)
-adding the VM to `config/service_vms.toml`. `DEPLOY.md`, "Registering the VM
-with the gadget monitor", says what goes in the entry and the PR. Skip this
-for dev or test VMs.
+- `tests/local_httpd_test.sh` runs the Apache configuration under a locally
+  installed httpd against a small fake archive and checks its behaviour:
+  listings, sort order, the partnership login, what must not be served.
+- `tests/web_test.sh BASE_URL [USER:PASSWORD]` runs the same checks against
+  any running copy, including the container (`./dev-startup.sh` starts one
+  locally with docker) and the deployed site.
+- The archiving scripts are tested in ztf-go-archivist (`make test`).
 
 ## Further reading
 
-- **`DEPLOY.md`** — deploy instructions, architecture, design choices, VM
-  infrastructure context, and what stays the same vs. what changes per
-  service.
-- **`monitoring/README.md`** — the service VM monitor: what it reports and
-  why its compose settings are what they are.
-- **`SECRETS.md`** — how secrets are handled, the `root_squash` ownership
-  story, and permissions.
+- `DEPLOY.md` — deploying to a VM, preparing the data directory, the cutover
+  from epyc, and why things are the way they are.
+- `SECRETS.md` — the two secrets and how to change them.
+- `monitoring/README.md` — the service VM monitor.
+- `docs/superpowers/specs/2026-11-20-ztf-alert-archive-port-design.md` — the
+  design for the port, including a description of the system as it ran on
+  epyc.
