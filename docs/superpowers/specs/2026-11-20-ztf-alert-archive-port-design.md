@@ -219,11 +219,27 @@ removed. Container names and `idac.service` labels use the prefix
     - gzip writes to a hidden temp name on the destination filesystem and is
       renamed into place, so a reader never sees a partial file;
     - `MD5SUMS` is updated by replacing any existing line for that filename,
-      not appending a duplicate;
+      not appending a duplicate. New lines use the bare filename
+      (`<md5>  ztf_public_YYYYMMDD.tar.gz`), so `md5sum -c` works from inside
+      the directory. Legacy lines are mixed: bare names up to about 2020,
+      then `/epyc/data/ztf/alerts/...` absolute paths;
+    - it refuses to replace a tarball that already exists unless given
+      `--force`. Legacy `mv` overwrote silently;
+    - a run for a past date (a `DATE` argument other than today's UTC date)
+      always uses a fresh consumer group, so it reads from the first offset
+      rather than from where an earlier run stopped, and passes a short
+      `-max-quiet-period` (10 minutes). A past night's topic is complete, so
+      there is no reason to wait 7 hours after its last message. Legacy
+      reruns each took about 7 hours for this reason;
     - all paths, the broker and the group come from environment variables
       with defaults set in `compose.yaml`.
-  - `rerun_archivist.sh` — same 7-day look-back and fresh dated consumer
-    group. Unchanged in behaviour.
+  - `rerun_archivist.sh` — same 7-day look-back, sequential, fresh consumer
+    group per run. With the short quiet period above, a rerun takes about as
+    long as reading and compressing the night, so a full 14-tarball backfill
+    fits well inside a day. This matters because the scheduler does not
+    start a night while the previous night's job is still running: under the
+    legacy 7-hours-per-rerun timing, three missing tarballs would make the
+    next night be skipped.
   - `nightly.sh` — starts the two program runs and the rerunner in parallel
     as today, waits, reports each exit code correctly, exits non-zero if any
     failed.
@@ -302,8 +318,13 @@ without the VM. The archivist is not started locally by default.
 ### Cutover
 
 1. Eric adds the VM's outbound IP to the broker allowlist.
-2. IT does the ownership change. Deploy on the VM. The web container serves
-   the stale copy; check it by the VM's own hostname.
+2. IT re-runs `FetchFromEpyc` so shire is current to the previous night,
+   then does the ownership change. Deploy on the VM the same day, so the
+   rerunner finds nothing to backfill on its first night. (Without the
+   re-sync it would see all 7 look-back days missing for both programs and
+   backfill them from Kafka, and those files would then count as
+   VM-produced.) The web container serves the copy; check it by the VM's own
+   hostname.
 3. Parallel run: the VM archivist runs nightly with
    `ZTF_ARCHIVIST_GROUP=ztf-go-archivist-vm` (a different group from epyc's
    `ztf-go-archivist`), writing into the real `alerts/` directories on shire.
@@ -313,9 +334,14 @@ without the VM. The archivist is not started locally by default.
    timestamps are the time of writing.
 4. Cutover day, after the epyc run has finished (after about 07:30 Pacific):
    disable the `ztf-archivist` crontab on epyc; rsync from epyc to shire the
-   nights that the VM did not produce (2026-10-27 up to the first parallel
-   night) without overwriting VM-produced files; rebuild `MD5SUMS` on shire
-   so it has exactly one line per tarball.
+   nights that the VM did not produce, without overwriting VM-produced
+   files, with one exception: where the VM's tarball for a night is empty
+   and epyc's is not, epyc's wins. Then normalise `MD5SUMS` on shire: strip
+   the `/epyc/data/ztf/alerts/<program>/` prefix from every line, keep the
+   last line for each filename, sort by filename. No checksums are computed
+   for the roughly 400 historical tarballs per program that never had a
+   line; that would mean reading several TB and falls under the
+   "no re-validating history" non-goal.
 5. IT points `ztf.uw.edu` at the VM's reverse proxy. Check all three URLs
    and a large download from outside UW.
 6. Register the VM with the gadget monitor, per `DEPLOY.md`.
@@ -342,6 +368,11 @@ Claude's calls, open to correction:
 - Go binary built from the pinned upstream commit in the image; wrapper
   scripts live in this repo.
 - Failed runs publish nothing; `MD5SUMS` lines are replaced, not duplicated.
+- `MD5SUMS` uses bare filenames from now on, and existing lines are
+  normalised to match at cutover.
+- No overwrite of an existing tarball without `--force`.
+- Past-date runs use a fresh consumer group and a 10-minute quiet period.
+- Shire is re-synced from epyc immediately before the first VM run.
 - Scratch and logs on shire; per-run logs with 90-day retention.
 - Schedule stays at 00:10 Pacific; `supercronic` as scheduler.
 - `/jupyter` and `programid3` are dropped.
