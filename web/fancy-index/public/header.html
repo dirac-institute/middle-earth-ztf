@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <base href="/alerts/public/">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title></title>
+  <link rel="stylesheet" type="text/css" href="/alerts/public/fancy-index/style.css">
+  <style>img[src$=".svg"] { width: 16px; }</style>
+</head>
+<body>
+
+<div id="banner" style='display: none'>
+Notice: This website will be offline for maintenance on Wednesday, June
+20th, between 8am and 6pm PST.
+</div>
+
+<div id="docs">
+
+<div>
+<h3>What is included?</h3>
+Below you will find compressed tar archives of ZTF event alerts (observations
+detected in image differences). Each tar
+file contains alerts collected in the given night (UTC-based), with each
+alert stored in a separate file in the <a
+href="https://zwickytransientfacility.github.io/ztf-avro-alert/">AVRO
+format</a>. To get you started, we offer <a
+href="https://github.com/ZwickyTransientFacility/ztf-avro-alert">a
+repository</a> with few basic utilities for reading AVRO-serialized data, as
+well as an <a href="https://github.com/ZwickyTransientFacility/ztf-avro-alert/blob/master/notebooks/Working_with_avro_files.ipynb">example
+Jupyter notebook</a>.
+The schema fields are described <a href="https://zwickytransientfacility.github.io/ztf-avro-alert/schema.html">here</a>.
+</div>
+
+<div>
+<h3>Why this service?</h3>
+We are providing this archive as simple alternative to public event brokers.
+Full-featured event brokers that provide real-time access to these alerts include <a href="https://mars.lco.global/">MARS</a>, <a href="https://lasair.roe.ac.uk/">Lasair</a>, <a href="https://antares.noao.edu/">ANTARES</a>, and <a href="http://alerce.science/">ALeRCE</a>.
+</div>
+
+<div>
+<h3>Known caveats</h3>
+<ul>
+<li>The data provided on this site is generated automatically.
+The files provided contain a full, unfiltered, 5-sigma alert stream.
+Depending on your science case, you may wish to improve the purity of your sample by
+<a href="https://github.com/ZwickyTransientFacility/ztf-avro-alert/blob/master/docs/filtering.md">filtering the data</a>
+on the included attributes such as the signal-to-noise ratio or the real-bogus score.
+<li>Users interested in un-subtracted archival photometry should consider the ZTF Data Releases, accessible <a href="https://irsa.ipac.caltech.edu/Missions/ztf.html">at IRSA</a>.
+<li>A subset of events obtained through Caltech time are made public here in "programid3" tarballs; as of this writing these are <a href="http://www.astronomerstelegram.org/?read=12952">additional observations of the current TESS sector</a>.
+</ul>
+</div>
+
+</div>

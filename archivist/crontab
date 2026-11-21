@@ -1,0 +1,7 @@
+# Read by supercronic in the archivist container. Times are in the
+# container's TZ, which compose.yaml sets to America/Los_Angeles.
+#
+# 00:10 Pacific, as on epyc. Each night's topic is named for its UTC date,
+# and at 00:10 Pacific the UTC date is already that of the night in progress.
+# The run lasts 7 hours, to just past dawn at Palomar.
+10 0 * * * /usr/local/bin/nightly.sh
