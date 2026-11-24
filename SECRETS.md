@@ -9,7 +9,7 @@ The service has two. Both are files in `/service/shire/secrets/`, which
 | File | Used by | Required | What it is |
 |---|---|---|---|
 | `htpasswd` | `web` | yes | The username and password for `/alerts/partnership/`. Apache htpasswd format, one user (`ztf`), shared by all ZTF partnership members. |
-| `slack_webhook` | `archivist` | no | A Slack incoming-webhook URL, on one line. When a nightly job fails, `nightly.sh` posts which job failed and the last lines of its log. Without the file, failures are only logged. |
+| `slack_webhook` | `archivist` | no | A Slack webhook URL, on one line: an incoming webhook or a Workflow Builder trigger (see below). When a nightly job fails, `nightly.sh` posts which job failed and the last lines of its log. Without the file, failures are only logged. |
 
 ```
 /service/shire/secrets/                 0755  $SVC_USER
@@ -23,26 +23,35 @@ The service has two. Both are files in `/service/shire/secrets/`, which
 ## Ownership and root_squash
 
 `/service/shire` is exported with `root_squash`, so **root on the VM cannot
-write to it** — root is mapped to `nobody`. The tree is owned by the service
-account named in IT's `/root/VM.set` (`VMUSER`, `VMUID`, `VMGID`), which
-`init.sh` also writes to the repo's `.env` as `SVC_USER`, `SVC_UID`,
+write to it** — root is mapped to `nobody`. `secrets/` is owned by the
+service account named in IT's `/root/VM.set` (`VMUSER`, `VMUID`, `VMGID`),
+which `init.sh` also writes to the repo's `.env` as `SVC_USER`, `SVC_UID`,
 `SVC_GID`. The containers run as that uid, which is why they can read
-mode-0600 files there.
+mode-0600 files there. (The archive itself is shared through a group instead;
+see DEPLOY.md, "Preparing the data directory".)
 
-To place or update a secret, become that user. The commands below use the
+To place or update a secret, write it as that user. The service account
+cannot read `/root` (mode 550), so it cannot copy a file from there itself:
+let root open the file and hand it over on stdin. The commands below use the
 `SVC_*` names; in bash, `source .env` in the repo directory first to set
 them.
 
 ```bash
-sudo -u $SVC_USER install -m 0600 /path/to/file /service/shire/secrets/<name>
+sudo -u $SVC_USER sh -c 'umask 077 && cat > /service/shire/secrets/<name> &&
+    chmod 600 /service/shire/secrets/<name>' < /path/to/file
 ```
 
 If the account is not available by name, use the numeric ids:
 
 ```bash
-setpriv --reuid=$SVC_UID --regid=$SVC_GID --clear-groups \
-    install -m 0600 /path/to/file /service/shire/secrets/<name>
+setpriv --reuid=$SVC_UID --regid=$SVC_GID --clear-groups sh -c 'umask 077 &&
+    cat > /service/shire/secrets/<name> &&
+    chmod 600 /service/shire/secrets/<name>' < /path/to/file
 ```
+
+Secrets are URLs and passwords: don't `cat` them to the terminal to check
+them. `sudo -u $SVC_USER wc -c /service/shire/secrets/<name>` shows the file
+is there and not empty.
 
 ## The partnership password
 
@@ -61,7 +70,8 @@ restart. Write the new file somewhere private, then install it:
 
 ```bash
 htpasswd -c -B /root/htpasswd.new ztf          # prompts for the new password
-sudo -u $SVC_USER install -m 0600 /root/htpasswd.new /service/shire/secrets/htpasswd
+sudo -u $SVC_USER sh -c 'umask 077 && cat > /service/shire/secrets/htpasswd &&
+    chmod 600 /service/shire/secrets/htpasswd' < /root/htpasswd.new
 rm /root/htpasswd.new
 ```
 
@@ -72,13 +82,22 @@ Check it with `tests/web_test.sh https://ztf.uw.edu ztf:<new password>` and
 
 ## The Slack webhook
 
-Create an incoming webhook for the channel that should hear about failed
-nights (Slack: *Apps → Incoming Webhooks → Add to Slack*, or an app with the
-*Incoming Webhooks* feature). Save the URL as the only line of a file and
-install it:
+`nightly.sh` (in ztf-go-archivist) posts `{"text": "<message>"}` to the URL
+in the file. Either kind of Slack webhook works:
+
+- **Incoming webhook** (`https://hooks.slack.com/services/...`): Slack *Apps →
+  Incoming Webhooks → Add to Slack*, or an app with the *Incoming Webhooks*
+  feature. Nothing else to set up.
+- **Workflow Builder trigger** (`https://hooks.slack.com/triggers/...`): a
+  workflow that starts *From a webhook*. It must define a text variable named
+  exactly `text`, and its *Send a message* step must insert that variable.
+  Otherwise the failure text does not reach the channel. The ztf.astro deployment uses one of these.
+
+Save the URL as the only line of a file and install it:
 
 ```bash
-sudo -u $SVC_USER install -m 0600 /root/slack_webhook /service/shire/secrets/slack_webhook
+sudo -u $SVC_USER sh -c 'umask 077 && cat > /service/shire/secrets/slack_webhook &&
+    chmod 600 /service/shire/secrets/slack_webhook' < /root/slack_webhook
 rm /root/slack_webhook
 ```
 
