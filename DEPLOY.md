@@ -76,20 +76,19 @@ curl -s http://localhost:9110/metrics | grep source_success
 `FetchFromEpyc` (`rsync -avSH epyc:/data2/epyc/data/ztf/alerts ./`), plus
 `html/` and `htpasswd`. Three things have to happen before the first deploy.
 
-**1. IT: make the service account the owner of the archive.** The copy kept
-epyc's ownership: directories `ztf-archivist:astro-ztf` mode 2775, tarballs
-`ztf-archivist:ztf-archivist` mode 664. The service account is not in
-`astro-ztf`, so it can read everything and write nothing. Root on the VM
-cannot fix this (`root_squash`); it has to be done as root on the file
-server, where the share is `/data/shire/@Service/ztf/data`:
+**1. IT: give the service account write access through the group.** The
+copy kept epyc's ownership: directories `ztf-archivist:astro-ztf` mode 2775,
+`MD5SUMS` group `astro-ztf` mode 664. The archive stays that way. Instead of
+owning it, the service account is a member of `astro-ztf` (IT has done this
+on ztf.astro), and the containers are given that group with `group_add` in
+`compose.yaml`. Root on the VM cannot change ownership or modes on the share
+(`root_squash`), so if they are wrong it has to be fixed as root on the file
+server, where the share is `/data/shire/@Service/ztf/data`.
 
-```bash
-chown -R astro-ztfsvc /data/shire/@Service/ztf/data/alerts/public \
-                      /data/shire/@Service/ztf/data/alerts/partnership
-```
-
-Group and modes can stay as they are. Any later re-sync from epyc must not
-undo this: add `--no-owner --no-group`, or repeat the `chown` afterwards.
+`init.sh` reads the group of `alerts/`, stops if the service account is not
+in it, writes it to `.env` as `DATA_GID`, and checks the archive directories
+with exactly the groups the containers will have. A re-sync from epyc keeps
+this working as long as it keeps the group and modes (`rsync -a` does).
 
 **2. Move the password file** to `secrets/htpasswd`, mode 600. See
 `SECRETS.md`, "The partnership password". Optionally add
@@ -122,8 +121,8 @@ before epyc is turned off.
    IT) and add it to the Kafka broker's allowlist. Until that is done the
    archivist cannot connect.
 2. Ask IT to re-run `FetchFromEpyc`, so the copy on shire is complete up to
-   last night, and then do the ownership change above. Do this on the day of
-   the first deploy. If nights from the last week are missing from shire,
+   last night, and check that the group and modes are as in step 1 above.
+   Do this on the day of the first deploy. If nights from the last week are missing from shire,
    the VM's rerunner will fetch them from Kafka itself, which is harmless but
    means those nights were never compared with epyc's.
 3. Move the password file. Deploy. Run the verification commands at the top.

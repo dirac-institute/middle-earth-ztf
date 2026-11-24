@@ -90,19 +90,33 @@ echo "== Data directory ($DATA_ROOT) =="
 # The share is exported with root_squash: root here is "nobody" there. Every
 # check and every mkdir is done as the service account, which is also who the
 # containers run as.
-as_svc() { setpriv --reuid="$SVC_UID" --regid="$SVC_GID" --clear-groups "$@"; }
 [ -d "$DATA_ROOT" ] || die "$DATA_ROOT does not exist. Is the share mounted? Ask PACS via help-astro@uw.edu."
+# The archive is not owned by the service account: it keeps epyc's ownership
+# and is shared through the group of the alerts directory (astro-ztf, mode
+# 2775), of which IT makes the service account a member. The containers get
+# that group through group_add in compose.yaml, and the checks below run with
+# exactly the groups the containers will have: the primary group plus this one.
+DATA_GID="$(stat -c %g "$DATA_ROOT/alerts" 2>/dev/null)" \
+    || die "$DATA_ROOT/alerts does not exist. See DEPLOY.md, \"Preparing the data directory\"."
+DATA_GROUP="$(getent group "$DATA_GID" | cut -d: -f1)"
+DATA_GROUP="${DATA_GROUP:-$DATA_GID}"
+if [ "$DATA_GID" != "$SVC_GID" ] && ! id -G "$SVC_USER" | tr ' ' '\n' | grep -qx "$DATA_GID"; then
+    die "$DATA_ROOT/alerts belongs to group $DATA_GROUP ($DATA_GID), and $SVC_USER is not a member,
+       so the archivist could not add tarballs. Ask PACS via help-astro@uw.edu to add
+       $SVC_USER to $DATA_GROUP. See DEPLOY.md, \"Preparing the data directory\"."
+fi
+echo "  ok   $SVC_USER is in $DATA_GROUP ($DATA_GID), the group of alerts/"
+as_svc() { setpriv --reuid="$SVC_UID" --regid="$SVC_GID" --groups="$DATA_GID" "$@"; }
 for d in alerts/public alerts/partnership; do
     as_svc test -d "$DATA_ROOT/$d" \
         || die "$DATA_ROOT/$d is missing or $SVC_USER cannot read it. See DEPLOY.md, \"Preparing the data directory\"."
     as_svc test -w "$DATA_ROOT/$d" \
         || die "$SVC_USER cannot write to $DATA_ROOT/$d, so the archivist could not add tarballs.
-       Ask IT to make $SVC_USER the owner of it and of the files in it. See DEPLOY.md,
-       \"Preparing the data directory\"."
+       It should be group $DATA_GROUP with mode 2775. See DEPLOY.md, \"Preparing the data directory\"."
     if as_svc test -e "$DATA_ROOT/$d/MD5SUMS" && ! as_svc test -w "$DATA_ROOT/$d/MD5SUMS"; then
         # Not fatal: the archivist replaces MD5SUMS by rename, which needs only
         # the directory to be writable.
-        warn "$DATA_ROOT/$d/MD5SUMS is not writable by $SVC_USER; the ownership change looks incomplete"
+        warn "$DATA_ROOT/$d/MD5SUMS is not writable by $SVC_USER; it should be group $DATA_GROUP, mode 664"
     fi
     echo "  ok   $d is writable by $SVC_USER"
 done
@@ -150,10 +164,12 @@ cat > "$ENV_FILE" <<EOF
 SVC_USER=$SVC_USER
 SVC_UID=$SVC_UID
 SVC_GID=$SVC_GID
+DATA_GID=$DATA_GID
 SVC_FQDN=$FQDN
 ZTF_DATA_ROOT=$DATA_ROOT
 EOF
 echo "  ok   SVC_USER=$SVC_USER SVC_UID=$SVC_UID SVC_GID=$SVC_GID written to $ENV_FILE"
+echo "  ok   DATA_GID=$DATA_GID ($DATA_GROUP) written to $ENV_FILE"
 echo "  ok   SVC_FQDN=$FQDN written to $ENV_FILE"
 echo "  ok   ZTF_DATA_ROOT=$DATA_ROOT written to $ENV_FILE"
 
