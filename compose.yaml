@@ -11,7 +11,7 @@
 #   monitoring  Reports the VM's CPU, memory and disks on port 9110 for the
 #               gadget monitor.
 #
-# SVC_USER, SVC_UID, SVC_GID, SVC_FQDN and ZTF_DATA_ROOT must be set in .env
+# SVC_USER, SVC_UID, SVC_GID, DATA_GID, SVC_FQDN and ZTF_DATA_ROOT must be set in .env
 # (written by init.sh from IT's /root/VM.set). There are no defaults; missing
 # values will cause podman compose to fail.
 
@@ -37,6 +37,10 @@ services:
       - "${ZTF_DATA_ROOT}/secrets:/run/secrets:ro"
     restart: unless-stopped
     user: "${SVC_UID}:${SVC_GID}"
+    # The archive is shared through this group (the group of alerts/), not
+    # owned by the service account. See DEPLOY.md, "Preparing the data directory".
+    group_add:
+      - "${DATA_GID}"
     labels:
       idac.service: ztf-alert-archive-web
 
@@ -76,6 +80,9 @@ services:
     stop_grace_period: 10s
     restart: unless-stopped
     user: "${SVC_UID}:${SVC_GID}"
+    # Write access to the archive comes from this group (the group of alerts/).
+    group_add:
+      - "${DATA_GID}"
     labels:
       idac.service: ztf-alert-archive-archivist
 
