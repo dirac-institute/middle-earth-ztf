@@ -91,7 +91,8 @@ in the file. Either kind of Slack webhook works:
 - **Workflow Builder trigger** (`https://hooks.slack.com/triggers/...`): a
   workflow that starts *From a webhook*. It must define a text variable named
   exactly `text`, and its *Send a message* step must insert that variable.
-  Otherwise the failure text does not reach the channel. The ztf.astro deployment uses one of these.
+  Otherwise the failure text does not reach the channel. The ztf.astro
+  deployment uses one of these.
 
 Save the URL as the only line of a file and install it:
 
