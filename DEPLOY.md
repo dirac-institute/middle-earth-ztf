@@ -25,6 +25,32 @@ podman logs ztf-alert-archive-archivist     # supercronic has read the crontab
 curl -s http://localhost:9110/metrics | grep source_success
 ```
 
+## Deploying a change
+
+```bash
+cd /root/middle-earth-ztf
+git pull
+sudo ./init.sh
+podman compose up -d --build --force-recreate
+```
+
+`--force-recreate` is required. `podman compose up -d` (podman-compose)
+leaves an existing container alone even when its image has just been rebuilt,
+so without it the change is built but never runs. To redeploy just one
+service, name it: `podman compose up -d --build --force-recreate --no-deps
+archivist`.
+
+Check which image a container is running against the newest build:
+
+```bash
+podman ps --format '{{.Names}} {{.ImageID}}'
+podman images --format '{{.Repository}} {{.ID}}' | grep ztf-alert-archive
+```
+
+Recreating the archivist kills a night in progress. Don't redeploy between
+00:10 and about 07:30 Pacific; if you have to, the rerunner picks the night up
+the following night.
+
 ## What each piece does
 
 | File | Role |

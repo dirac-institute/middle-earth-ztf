@@ -80,10 +80,11 @@ it.
 ```bash
 git pull
 sudo ./init.sh
-podman compose up -d --build
+podman compose up -d --build --force-recreate
 ```
 
-Rebuilding restarts the archivist. Between 00:10 and about 07:30 Pacific that
+Without `--force-recreate` the existing containers keep running their old
+images (DEPLOY.md, "Deploying a change"). Recreating restarts the archivist. Between 00:10 and about 07:30 Pacific that
 kills the night in progress; the rerunner will pick the night up the
 following night, but avoid it.
 

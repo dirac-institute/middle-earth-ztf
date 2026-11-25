@@ -179,4 +179,4 @@ if [ "$WARNINGS" -gt 0 ]; then
 else
     echo "init complete."
 fi
-echo "Next: podman compose up -d --build"
+echo "Next: podman compose up -d --build --force-recreate   (see DEPLOY.md, \"Deploying a change\")"
