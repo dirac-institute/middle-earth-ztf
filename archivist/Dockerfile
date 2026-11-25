@@ -41,4 +41,8 @@ COPY --from=build /out/ /usr/local/bin/
 COPY crontab /etc/ztf-archivist.crontab
 RUN supercronic -test /etc/ztf-archivist.crontab
 
-CMD ["supercronic", "/etc/ztf-archivist.crontab"]
+# Full path, not a bare name: as PID 1, supercronic re-executes itself as a
+# child (it stays behind to reap zombies) using argv[0], which is not looked up
+# on PATH. With a bare "supercronic" that fails with "Failed to fork exec: no
+# such file or directory" and the container restarts in a loop.
+CMD ["/usr/local/bin/supercronic", "/etc/ztf-archivist.crontab"]
